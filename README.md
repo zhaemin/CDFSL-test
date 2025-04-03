@@ -16,6 +16,6 @@ python main.py -m 'clsmod' -tr -tc 'fewshot' -d 'miniimagenet' -e 100 -lr 0.01 -
 
 ### Test 2
 ```bash
-python main.py -m 'clsmod' -tc 'crossdomain' -d 'BSCD' -e 100 -lr 0.01 -bs 256 -opt 'adamW' -log '' -img_size 224 -patch_size 16 -num_objects 1 -checkpointdir 'clsmod_100ep_0.01lr.pt'
+python main.py -m 'clsmod' -tc 'crossdomain' -d 'BSCD'  -log '' -img_size 224 -patch_size 16 -checkpointdir 'clsmod_100ep_0.01lr.pt'
 ```
 
