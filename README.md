@@ -2,9 +2,9 @@
 
 ## Arguments
 - `m`: models to train / baseline, prompt, clsmod, posmod, clsmod_pospermute, prototype_contextualization, lowlayer_contextualization .
-- 'd' : miniimagenet, BSCD, FWT, all
+- `d`: miniimagenet, BSCD, FWT, all
 - `checkpointdir`: checkpoint direction to test.
-- 'continual_layers' : only used in lowlayer_contextualization, select low layer to contextualize.
+- `continual_layers` : only used in lowlayer_contextualization, select low layer to contextualize.
 
 
 ## Example Execution Scripts
