@@ -19,7 +19,7 @@ import torch.nn.functional as F
 class MultiHeadCrossAttention(nn.Module):
     def __init__(self, input_dim, output_dim, num_heads=8):
         super().__init__()
-        assert output_dim % num_heads == 0
+        self.ln1 = nn.LayerNorm(input_dim)
 
         self.num_heads = num_heads
         self.head_dim = output_dim // num_heads
@@ -30,6 +30,9 @@ class MultiHeadCrossAttention(nn.Module):
         self.v = nn.Linear(input_dim, output_dim)
         self.o = nn.Linear(output_dim, output_dim)
         
+        self.ln2 = nn.LayerNorm(input_dim)
+        self.mlp = vit.Mlp(in_features=input_dim, hidden_features=input_dim*4, out_features=input_dim)
+        
         self.init_o()
 
     def init_o(self):
@@ -39,7 +42,11 @@ class MultiHeadCrossAttention(nn.Module):
     def forward(self, x, y):
         B, N, _ = x.shape
         _, M, _ = y.shape
-
+        
+        r = x
+        x = self.ln1(x)
+        y = self.ln1(y)
+        
         q = self.q(x)
         k = self.k(y)
         v = self.v(y)
@@ -50,11 +57,12 @@ class MultiHeadCrossAttention(nn.Module):
 
         z = F.scaled_dot_product_attention(q, k, v)
 
-        # Concatenate heads
         z = z.transpose(1, 2).contiguous().view(B, N, self.output_dim)  # (B, N, output_dim)
+        z = self.ln2(z)
+        z = self.mlp(z)
         
         out = self.o(z)
-        return out
+        return  r + out
 
 
 class CrossAttention(nn.Module):
@@ -88,22 +96,12 @@ class ContextUnit(nn.Module):
             MultiHeadCrossAttention(input_dim, input_dim)
             for _ in range(num_layers)
         ])
-        #self.norm2 = nn.LayerNorm(input_dim)
-        #self.mlp = vit.Mlp(in_features=input_dim, hidden_features=input_dim*4, out_features=input_dim)
     
     def forward(self, q, kv):
-        '''
-        r1 = q
-        q1 = self.norm1(q)
         for layer in self.crossattn:
-            q1 = layer(q1, kv)
-        q1 = r1 + q1
-        '''
-        q1 = q
-        for layer in self.crossattn:
-            q1 = q1 + layer(q1, kv)
-        
-        return  q1
+            q = layer(q, kv)
+            
+        return  q
         
 
 class VisionTransformer(vit.VisionTransformer):
