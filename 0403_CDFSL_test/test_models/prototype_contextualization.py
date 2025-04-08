@@ -12,6 +12,50 @@ from functools import partial
 from utils import split_support_query_set
 import backbone.vision_transformer as vit
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class MultiHeadCrossAttention(nn.Module):
+    def __init__(self, input_dim, output_dim, num_heads=8):
+        super().__init__()
+        assert output_dim % num_heads == 0
+
+        self.num_heads = num_heads
+        self.head_dim = output_dim // num_heads
+        self.output_dim = output_dim
+
+        self.q = nn.Linear(input_dim, output_dim)
+        self.k = nn.Linear(input_dim, output_dim)
+        self.v = nn.Linear(input_dim, output_dim)
+        self.o = nn.Linear(output_dim, output_dim)
+        
+        self.init_o()
+
+    def init_o(self):
+        nn.init.zeros_(self.o.weight)
+        nn.init.zeros_(self.o.bias)
+
+    def forward(self, x, y):
+        B, N, _ = x.shape
+        _, M, _ = y.shape
+
+        q = self.q(x)
+        k = self.k(y)
+        v = self.v(y)
+
+        q = q.view(B, N, self.num_heads, self.head_dim).transpose(1, 2)  # (B, H, N, D)
+        k = k.view(B, M, self.num_heads, self.head_dim).transpose(1, 2)
+        v = v.view(B, M, self.num_heads, self.head_dim).transpose(1, 2)
+
+        z = F.scaled_dot_product_attention(q, k, v)
+
+        # Concatenate heads
+        z = z.transpose(1, 2).contiguous().view(B, N, self.output_dim)  # (B, N, output_dim)
+        
+        out = self.o(z)
+        return out
+
 
 class CrossAttention(nn.Module):
     def __init__(self, input_dim, output_dim):
@@ -36,34 +80,52 @@ class CrossAttention(nn.Module):
         
         return z
 
-class SelfAttention(nn.Module):
-    def __init__(self, input_dim, output_dim):
+class ContextUnit(nn.Module):
+    def __init__(self, input_dim, num_layers):
         super().__init__()
-        self.qkv = nn.Linear(input_dim, input_dim * 3)
-        self.o = nn.Linear(input_dim, output_dim)
+        self.norm1 = nn.LayerNorm(input_dim)
+        self.crossattn = nn.ModuleList([
+            MultiHeadCrossAttention(input_dim, input_dim)
+            for _ in range(num_layers)
+        ])
+        #self.norm2 = nn.LayerNorm(input_dim)
+        #self.mlp = vit.Mlp(in_features=input_dim, hidden_features=input_dim*4, out_features=input_dim)
+    
+    def forward(self, q, kv):
+        '''
+        r1 = q
+        q1 = self.norm1(q)
+        for layer in self.crossattn:
+            q1 = layer(q1, kv)
+        q1 = r1 + q1
+        '''
+        q1 = q
+        for layer in self.crossattn:
+            q1 = q1 + layer(q1, kv)
         
-    def forward(self, x):
-        qkv = self.qkv(x)
-        q, k, v = torch.chunk(qkv, 3, dim=-1)
-        z = F.scaled_dot_product_attention(q, k, v)
-        z = self.o(z)
+        return  q1
         
-        return z
 
 class VisionTransformer(vit.VisionTransformer):
-    def __init__(self, img_size=[224], patch_size=16, in_chans=3, num_classes=0, embed_dim=768, depth=12,
-                 num_heads=12, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
-                 drop_path_rate=0., norm_layer=nn.LayerNorm, continual_layers=None, **kwargs):
-        super().__init__(img_size, patch_size, in_chans, num_classes, embed_dim, depth,
-                         num_heads, mlp_ratio, qkv_bias, qk_scale, drop_rate, attn_drop_rate, drop_path_rate, norm_layer)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
     def forward(self, x):
         x = self.prepare_tokens(x)
         for blk in self.blocks:
             x = blk(x)
         #x = self.norm(x)
-        # modified
         return x
+    
+    def get_intermediate_layers(self, x, n=1):
+        x = self.prepare_tokens(x)
+        # we return the output tokens from the `n` last blocks
+        output = []
+        for i, blk in enumerate(self.blocks):
+            x = blk(x)
+            if len(self.blocks) - i <= n:
+                output.append(x)
+        return output
 
 class SETFSL(nn.Module):
     def __init__(self, img_size, patch_size, num_objects, temperature, layer, with_cls=False, continual_layers=None, train_w_qkv=False, train_w_o=False):
@@ -87,17 +149,17 @@ class SETFSL(nn.Module):
         
         self.layer = layer
         
-        self.norm = nn.LayerNorm(self.encoder_dim)
-        
-        # individual CA
-        self.crossattn = CrossAttention(self.encoder_dim, self.ca_dim)
-        
-        for name, param in self.encoder.named_parameters():
-            param.requires_grad = False
+        self.context_unit = ContextUnit(self.encoder_dim, self.layer)
+        print(len(self.context_unit.crossattn))
+        self.fix_encoder()
         
         print('prototype_contextualization')
         print('num_object:', num_objects,' temerature:', temperature, ' layer:', layer, ' withcls:', with_cls, ' train_w_qkv:', train_w_qkv, ' train_w_o:', train_w_o,
               'ca_dim:', self.ca_dim)
+        
+    def fix_encoder(self):
+        for name, param in self.encoder.named_parameters():
+            param.requires_grad = False
         
     def load_backbone(self, patch_size=16, **kwargs):
         encoder =  VisionTransformer(
@@ -122,11 +184,10 @@ class SETFSL(nn.Module):
             prototypes_cls = prototypes_cls.unsqueeze(0).repeat(query_size, 1, 1) # queries 5 384
             q = torch.concat((prototypes_cls, query_cls), dim=1)
             
-            # context block
-            contextualized_x  = q + self.crossattn(q, x_query)
+            contextualized_x = self.context_unit(q, x_query)
             
-            prototypes = self.norm(contextualized_x[:, :-1, :]) # 75 5 384
-            x_query = self.norm(contextualized_x[:, -1, :]).unsqueeze(1)  # 75 1 384
+            prototypes = contextualized_x[:, :-1, :] # 75 5 384
+            x_query = contextualized_x[:, -1, :].unsqueeze(1)  # 75 1 384
             
             prototypes = F.normalize(prototypes, dim=-1) # 75 5 384
             x_query = F.normalize(x_query, dim=-1) # 75 1 384
@@ -158,11 +219,10 @@ class SETFSL(nn.Module):
                 prototypes_cls = prototypes_cls.unsqueeze(0).repeat(query_size, 1, 1) # queries 5 384
                 q = torch.concat((prototypes_cls, query_cls), dim=1)
                 
-                # context block
-                contextualized_x  = q + self.crossattn(q, x_query)
+                contextualized_x = self.context_unit(q, x_query)
                 
-                prototypes = self.norm(contextualized_x[:, :-1, :]) # 75 5 384
-                x_query = self.norm(contextualized_x[:, -1, :]).unsqueeze(1)  # 75 1 384
+                prototypes = contextualized_x[:, :-1, :] # 75 5 384
+                x_query = contextualized_x[:, -1, :].unsqueeze(1)  # 75 1 384
                 
                 prototypes = F.normalize(prototypes, dim=-1) # 75 5 384
                 x_query = F.normalize(x_query, dim=-1) # 75 1 384

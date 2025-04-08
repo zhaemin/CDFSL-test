@@ -27,7 +27,8 @@ def train_per_epoch(args, dataloader, net, optimizer, scheduler, device):
     
     for data in dataloader:
         inputs, labels = data
-        inputs, labels = inputs.to(device), labels.to(device)
+        if not isinstance(inputs, list):
+            inputs, labels = inputs.to(device), labels.to(device)
         loss = net(inputs, labels, args, device)
         
         optimizer.zero_grad()
@@ -107,8 +108,10 @@ def train(args, trainloader, testloader, valloader, net, optimizer, scheduler, d
         
         torch.save(net.state_dict(), f'./{args.model}_{args.epochs}ep_{args.learningrate}lr_{args.log}.pt')
 
+        '''
         if acc > max_acc:
             torch.save(net.state_dict(), f'./{args.model}_best_ep_{args.learningrate}lr_{args.log}.pt')
+        '''
             
         running_loss = 0.0
         
@@ -159,7 +162,7 @@ def main():
         print('fewshot_acc : %.3f'%(acc), file=outputs_log)
     
     elif args.test == 'crossdomain':
-        #net.encoder.load_state_dict(torch.load('dino_deitsmall16_pretrain.pth'))
+        #net.encoder.load_state_dict(torch.load('dino_deitsmall16_pretrain.pth'), strict=False)
         net.load_state_dict(torch.load(args.checkpointdir))
         print(args.checkpointdir)
         crossdomain_test(args, net, device, outputs_log)

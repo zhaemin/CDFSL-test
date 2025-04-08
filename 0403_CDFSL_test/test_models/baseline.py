@@ -7,9 +7,14 @@ import copy
 import math
 import random
 import numpy as np
+from functools import partial
 
 from utils import split_support_query_set
 import backbone.vision_transformer as vit
+
+class VisionTransformer(vit.VisionTransformer):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
 class Baseline(nn.Module):
     def __init__(self, img_size, patch_size):
@@ -19,8 +24,10 @@ class Baseline(nn.Module):
         self.encoder = self.load_backbone()
         print('baseline')
         
-    def load_backbone(self):
-        encoder = vit.__dict__['vit_small'](img_size=[self.img_size], patch_size=self.patch_size)
+    def load_backbone(self, patch_size=16, **kwargs):
+        encoder =  VisionTransformer(
+        patch_size=patch_size, embed_dim=384, depth=12, num_heads=6, mlp_ratio=4,
+        qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
         
         return encoder
         
