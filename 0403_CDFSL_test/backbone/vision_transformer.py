@@ -91,13 +91,18 @@ class Attention(nn.Module):
         x = self.proj_drop(x)
         return x, attn
 
-
+#modified for affinetuning
+def dynamic_affine_norm(x, dim, weight, bias):
+    return nn.functional.layer_norm(x, [dim], weight, bias, eps=1e-6)
+    
 class Block(nn.Module):
     def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
-                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm):
+                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, attn_class=Attention):
         super().__init__()
         self.norm1 = norm_layer(dim)
-        self.attn = Attention(
+        # modified
+        self.dim = dim
+        self.attn = attn_class(
             dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
@@ -111,7 +116,28 @@ class Block(nn.Module):
         x = x + self.drop_path(y)
         x = x + self.drop_path(self.mlp(self.norm2(x)))
         return x
+    
+    #modified for prefixtuning
+    def forward_prefixtuning(self, x, return_attention=False, prefix_prompt=None):
+        if prefix_prompt != None:
+            y, attn = self.attn(self.norm1(x), prefix_prompt)
+        else:
+            y, attn = self.attn(self.norm1(x))
+        if return_attention:
+            return attn
+        x = x + self.drop_path(y)
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
+        return x
+    
+    def forward_affinetuning(self, x, weight1, bias1, weight2, bias2, return_attention=False):
+        y, attn = self.attn(dynamic_affine_norm(x, self.dim, self.norm1.weight+weight1, self.norm1.bias+bias1))
 
+        if return_attention:
+            return attn
+        x = x + self.drop_path(y)
+        x = x + self.drop_path(self.mlp(dynamic_affine_norm(x, self.dim, self.norm2.weight+weight2, self.norm2.bias+bias2)))
+
+        return x
 
 class PatchEmbed(nn.Module):
     """ Image to Patch Embedding
@@ -148,10 +174,11 @@ class VisionTransformer(nn.Module):
         self.pos_drop = nn.Dropout(p=drop_rate)
 
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        # modified
         self.blocks = nn.ModuleList([
             Block(
                 dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer)
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer, attn_class=kwargs.get('attn_class', Attention))
             for i in range(depth)])
         self.norm = norm_layer(embed_dim)
 
