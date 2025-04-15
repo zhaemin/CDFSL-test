@@ -1,0 +1,6 @@
+CropDisease fewshot_acc : 94.569
+EuroSAT fewshot_acc : 88.882
+ISIC fewshot_acc : 47.513
+ChestX fewshot_acc : 26.644
+miniimagenet fewshot_acc : 95.749
+mean_acc : 70.672
