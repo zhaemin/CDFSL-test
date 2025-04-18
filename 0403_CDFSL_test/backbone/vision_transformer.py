@@ -118,11 +118,8 @@ class Block(nn.Module):
         return x
     
     #modified for prefixtuning
-    def forward_prefixtuning(self, x, return_attention=False, prefix_prompt=None):
-        if prefix_prompt != None:
-            y, attn = self.attn(self.norm1(x), prefix_prompt)
-        else:
-            y, attn = self.attn(self.norm1(x))
+    def forward_prefixtuning(self, x, return_attention=False, prefix_prompt=None, blk_num=None):
+        y, attn = self.attn(self.norm1(x), prefix_prompt, blk_num)
         if return_attention:
             return attn
         x = x + self.drop_path(y)
@@ -138,6 +135,15 @@ class Block(nn.Module):
         x = x + self.drop_path(self.mlp(dynamic_affine_norm(x, self.dim, self.norm2.weight+weight2, self.norm2.bias+bias2)))
 
         return x
+    
+    def forward_vqt(self, x, return_attention=False, num_query_tokens=1):
+        y, attn = self.attn(self.norm1(x), num_query_tokens)
+        if return_attention:
+            return attn
+        x = x + self.drop_path(y)
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
+        return x
+
 
 class PatchEmbed(nn.Module):
     """ Image to Patch Embedding
@@ -175,8 +181,9 @@ class VisionTransformer(nn.Module):
 
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
         # modified
+        block_class = kwargs.get('block_class', Block)
         self.blocks = nn.ModuleList([
-            Block(
+            block_class(
                 dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer, attn_class=kwargs.get('attn_class', Attention))
             for i in range(depth)])
