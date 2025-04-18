@@ -19,28 +19,29 @@ class VisionTransformer(vit.VisionTransformer):
         super().__init__(**kwargs)
         num_heads = kwargs['num_heads']
         num_layers = kwargs['depth']
+        self.only_lastnorm = kwargs['only_lastnorm']
         self.temperature = 1
-        '''
-        self.st_affine_weight_projector = nn.ModuleList([
-            nn.Linear(self.num_features, self.num_features)
-            for _ in range((num_layers*2+1))
-        ])
-        self.st_affine_bias_projector = nn.ModuleList([
-            nn.Linear(self.num_features, self.num_features)
-            for _ in range((num_layers*2+1))
-        ])
-        '''
-         # only last norm
-        self.st_affine_weight_projector = nn.ModuleList([
-            nn.Linear(self.num_features, self.num_features)
-            for _ in range((1))
-        ])
-        self.st_affine_bias_projector = nn.ModuleList([
-            nn.Linear(self.num_features, self.num_features)
-            for _ in range((1))
-        ])
         
-        #self.st_clsmod = nn.Parameter(torch.zeros_like(self.cls_token))
+        if self.only_lastnorm:
+            self.st_affine_weight_projector = nn.ModuleList([
+                nn.Linear(self.num_features, self.num_features)
+                for _ in range((1))
+            ])
+            self.st_affine_bias_projector = nn.ModuleList([
+                nn.Linear(self.num_features, self.num_features)
+                for _ in range((1))
+            ])
+        else:
+            self.st_affine_weight_projector = nn.ModuleList([
+                nn.Linear(self.num_features, self.num_features)
+                for _ in range((num_layers*2+1))
+            ])
+            self.st_affine_bias_projector = nn.ModuleList([
+                nn.Linear(self.num_features, self.num_features)
+                for _ in range((num_layers*2+1))
+            ])
+            
+        self.st_clsmod = nn.Parameter(torch.zeros_like(self.cls_token))
         
         for proj in self.st_affine_weight_projector:
             nn.init.zeros_(proj.weight)
@@ -49,7 +50,7 @@ class VisionTransformer(vit.VisionTransformer):
         for proj in self.st_affine_bias_projector:
             nn.init.zeros_(proj.weight)
             nn.init.zeros_(proj.bias)
-    '''
+    
     def prepare_tokens(self, x):
         B, nc, w, h = x.shape
         x = self.patch_embed(x)  # patch linear embedding
@@ -64,22 +65,22 @@ class VisionTransformer(vit.VisionTransformer):
         x = x + pos_embed
         
         return self.pos_drop(x)
-    '''
+    
     def forward(self, x, prototypes=None):
         x = self.prepare_tokens(x)
         
         if prototypes != None:
             prototypes = prototypes.sum(dim=0) # 1 dim
             for i, blk in enumerate(self.blocks):
-                '''
-                weight1 = self.st_affine_weight_projector[2*i](prototypes) * self.temperature # dim
-                bias1 = self.st_affine_bias_projector[2*i](prototypes) * self.temperature 
-                weight2 = self.st_affine_weight_projector[2*i+1](prototypes) * self.temperature 
-                bias2 = self.st_affine_bias_projector[2*i+1](prototypes) * self.temperature 
-                
-                x = blk.forward_affinetuning(x, weight1, bias1, weight2, bias2)
-                '''
-                x = blk(x)
+                if self.only_lastnorm:
+                    x = blk(x)
+                else:
+                    weight1 = self.st_affine_weight_projector[2*i](prototypes) * self.temperature # dim
+                    bias1 = self.st_affine_bias_projector[2*i](prototypes) * self.temperature 
+                    weight2 = self.st_affine_weight_projector[2*i+1](prototypes) * self.temperature 
+                    bias2 = self.st_affine_bias_projector[2*i+1](prototypes) * self.temperature 
+                    
+                    x = blk.forward_affinetuning(x, weight1, bias1, weight2, bias2)
                 
             weight = self.st_affine_weight_projector[-1](prototypes) * self.temperature 
             bias = self.st_affine_weight_projector[-1](prototypes) * self.temperature 
@@ -93,11 +94,11 @@ class VisionTransformer(vit.VisionTransformer):
         return x[:, 0]
 
 class AffineTuning(Baseline):
-    def __init__(self, img_size, patch_size):
+    def __init__(self, img_size, patch_size, only_lastnorm):
         super(AffineTuning, self).__init__(img_size, patch_size)
         self.img_size = img_size
         self.patch_size = patch_size
-        self.encoder = self.load_backbone(patch_size)
+        self.encoder = self.load_backbone(patch_size, only_lastnorm)
 
         self.fix_encoder()
 
@@ -108,10 +109,10 @@ class AffineTuning(Baseline):
             else:
                 print(name)
     
-    def load_backbone(self, patch_size=16, **kwargs):
+    def load_backbone(self, patch_size=16, only_lastnorm=False, **kwargs):
         encoder =  VisionTransformer(
         patch_size=patch_size, embed_dim=384, depth=12, num_heads=6, mlp_ratio=4,
-        qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs) # affine false로 설정
+        qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), only_lastnorm=only_lastnorm, **kwargs) # affine false로 설정
         
         return encoder
     
@@ -121,7 +122,6 @@ class AffineTuning(Baseline):
         prototypes = F.normalize(prototypes, dim=-1)
         
         x_query = self.encoder(x_query, prototypes)
-        
         x_query = F.normalize(x_query, dim=-1)
         
         distance = torch.einsum('qd, wd -> qw', x_query, prototypes) # 75 5
