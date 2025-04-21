@@ -33,7 +33,7 @@ def parsing_argument():
     parser.add_argument('-shots', '--num_shots', metavar='int', type=int, help='shots', default=5)
     parser.add_argument('-tasks', '--num_tasks', metavar='int', type=int, help='tasks', default=1)
     parser.add_argument('-q', '--num_queries', metavar='int', type=int, help='queries', default=15)
-    parser.add_argument('-ep', '--episodes', metavar='int', type=int, help='episodes', default=500)
+    parser.add_argument('-ep', '--episodes', metavar='int', type=int, help='episodes', default=100)
     
     # for ViT
     parser.add_argument('-img_size', '--img_size', metavar='int', type=int, help='input img size', default=84)
@@ -54,6 +54,9 @@ def parsing_argument():
     
     parser.add_argument('-finetune_norm', '--finetune_norm', action='store_true')
     parser.add_argument('-permute_pos', '--permute_pos', action='store_true')
+    parser.add_argument('-only_lastnorm', '--only_lastnorm', action='store_true')
+    
+    parser.add_argument('-nqt', '--num_query_tokens', metavar='int', type=int, default=1)
     
     return parser.parse_args()
 
@@ -62,21 +65,21 @@ def set_parameters(args, net, len_trainloader):
         sourcetrain_param = []
         encoder_param = []
         encoder_st_param = []
+        cls_param = []
         
         for name, param in net.named_parameters():
             if 'encoder' not in name or 'st_' in name:
                 if 'st_' in name:
                     encoder_st_param.append(param)
                 else:
-                    print(name)
                     sourcetrain_param.append(param)
             else:
                 encoder_param.append(param)
 
         if args.optimizer == 'adamW':
-            optimizer = optim.AdamW([{'params':sourcetrain_param, 'lr':args.learningrate}, {'params':encoder_param, 'lr':1e-6}, {'params':encoder_st_param, 'lr':0.01}])
+            optimizer = optim.AdamW([{'params':sourcetrain_param, 'lr':args.learningrate}, {'params':encoder_param, 'lr':args.learningrate}, {'params':encoder_st_param, 'lr':args.learningrate}])
         else:
-            optimizer = optim.Adam([{'params':sourcetrain_param, 'lr':args.learningrate}, {'params':encoder_param, 'lr':1e-6}, {'params':encoder_st_param, 'lr':0.01}])
+            optimizer = optim.Adam([{'params':sourcetrain_param, 'lr':args.learningrate, 'weight_decay':0.01}, {'params':encoder_param, 'lr':1e-6}, {'params':encoder_st_param, 'lr':args.learningrate, 'weight_decay':0.01}])
         if args.sched == 'cosine':
             print('cosine annealing sched')
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs, eta_min=1e-6)
@@ -134,6 +137,18 @@ def load_model(args):
     elif args.model == 'posmod':
         import test_models.positonal_modification as posmod
         net = posmod.POSMOD(args.img_size, args.patch_size)
+    elif args.model == 'vqt':
+        import test_models.visualquerytuning as vqt
+        net = vqt.VQTuning(args.img_size, args.patch_size, args.num_query_tokens)
+    elif args.model == 'prefixtuning':
+        import test_models.prefixtuning as prefixtuning
+        net = prefixtuning.PrefixTuning(args.img_size, args.patch_size)
+    elif args.model == 'affinetuning':
+        import test_models.affinetuning as affinetuning
+        net = affinetuning.AffineTuning(args.img_size, args.patch_size, args.only_lastnorm)
+    elif args.model == 'bntuning':
+        import test_models.batchnorm_tuning as bntuning
+        net = bntuning.BNTuning(args.img_size, args.patch_size)
     elif args.model == 'ft_contextualization':
         import test_models.ft_contextualization as ft_context
         net = ft_context.FTCONTEXT(args.img_size, args.patch_size, args.num_objects, args.temperature, args.layer, args.withcls, args.continual_layers, args.train_w_qkv, args.train_w_o)
