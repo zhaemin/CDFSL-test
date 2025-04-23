@@ -21,7 +21,7 @@ class CustomLinearNorm(nn.Module):
 
     def forward(self, x, mean=None, var=None, weight=1., bias=0.):
         if mean is None:
-            mean = torch.mean(x, dim=(0, 2), keepdim=True) # B N 1
+            mean = torch.mean(x, dim=(0, 2), keepdim=True) # 1 N 1
         if var is None:
             var = torch.var(x, dim=(0, 2), unbiased=False, keepdim=True)
         x_norm = (x - mean) / ((var + self.eps) ** 0.5)
