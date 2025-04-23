@@ -14,20 +14,18 @@ import backbone.vision_transformer as vit
 from test_models.baseline import Baseline
 
 
-class CustomBatchNorm(nn.Module):
+class CustomLinearNorm(nn.Module):
     def __init__(self, num_features, eps=1e-6):
         super().__init__()
         self.eps = eps
-        self.weight = nn.Parameter(torch.ones(num_features))
-        self.bias = nn.Parameter(torch.zeros(num_features))
 
     def forward(self, x, mean=None, var=None, weight=1., bias=0.):
         if mean is None:
-            mean = torch.mean(x, dim=(0,2)).unsqueeze(0).unsqueeze(-1) # 1 L 1
+            mean = torch.mean(x, dim=(0, 2), keepdim=True) # B N 1
         if var is None:
-            var = torch.var(x, dim=(0,2), unbiased=False).unsqueeze(0).unsqueeze(-1)
+            var = torch.var(x, dim=(0, 2), unbiased=False, keepdim=True)
         x_norm = (x - mean) / ((var + self.eps) ** 0.5)
-        out = self.weight * x_norm + self.bias
+        out = weight * x_norm + bias
         return out, mean, var
 
 class BNBlock(vit.Block):
@@ -35,21 +33,22 @@ class BNBlock(vit.Block):
                  drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, attn_class=vit.Attention):
         super().__init__(dim, num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale, drop=drop, attn_drop=attn_drop,
                  drop_path=drop_path, act_layer=act_layer, norm_layer=norm_layer, attn_class=attn_class)
-        self.st_bn1 = CustomBatchNorm(dim)
-        self.st_bn2 = CustomBatchNorm(dim)
+        self.st_n1 = CustomLinearNorm(dim)
+        self.st_n2 = CustomLinearNorm(dim)
+        self.print_flag = True
     
     def forward(self, x, return_attention=False, supports_stat=None):
         mean1, var1, mean2, var2 = None, None, None, None
         if supports_stat != None:
             mean1, var1, mean2, var2 = supports_stat[0], supports_stat[1], supports_stat[2], supports_stat[3]
         
-        y, attn = self.attn(self.norm1(x))
+        x_norm, mean1, var1 = self.st_n1(x, weight=self.norm1.weight, bias=self.norm1.bias)
+        y, attn = self.attn(x_norm)
         if return_attention:
             return attn
         x = x + self.drop_path(y)
-        x = x + self.drop_path(self.mlp(self.norm2(x)))
-        
-        x, mean1, var1 = self.st_bn1(x, mean1, var1)
+        x_norm, mean2, var2 = self.st_n2(x, weight=self.norm2.weight, bias=self.norm2.bias)
+        x = x + self.drop_path(self.mlp(x_norm))
         
         return x, mean1, var1, mean2, var2
     
@@ -101,7 +100,6 @@ class BNTuning(Baseline):
     def fix_encoder(self):
         for name, param in self.encoder.named_parameters():
             if 'norm' in name or 'st_' in name or 'bn' in name:
-            #if 'st_' in name or 'bn' in name:
                 print(name)
                 param.requires_grad = True
             else:
