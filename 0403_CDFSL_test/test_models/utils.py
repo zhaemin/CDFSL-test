@@ -25,7 +25,6 @@ def parsing_argument():
     # for scheduling
     parser.add_argument('-e', '--epochs', metavar='int', type=int, help='epochs', default=2)
     parser.add_argument('-lr', '--learningrate', metavar='float', type=float, help='lr', default=0.01)
-    parser.add_argument('-elr', '--encoderlearningrate', metavar='float', type=float, help='lr', default=1e-6)
     parser.add_argument('-warmup', '--warmup', metavar='float', type=float, help='warmupepochs', default=0)
     
     # for fewshot
@@ -71,7 +70,6 @@ def set_parameters(args, net, len_trainloader):
         for name, param in net.named_parameters():
             if 'encoder' not in name or 'st_' in name:
                 if 'st_' in name:
-                    print(name)
                     encoder_st_param.append(param)
                 else:
                     sourcetrain_param.append(param)
@@ -79,7 +77,7 @@ def set_parameters(args, net, len_trainloader):
                 encoder_param.append(param)
 
         if args.optimizer == 'adamW':
-            optimizer = optim.AdamW([{'params':sourcetrain_param, 'lr':args.learningrate}, {'params':encoder_param, 'lr':args.encoderlearningrate}, {'params':encoder_st_param, 'lr':args.learningrate}])
+            optimizer = optim.AdamW([{'params':sourcetrain_param, 'lr':args.learningrate}, {'params':encoder_param, 'lr':args.learningrate}, {'params':encoder_st_param, 'lr':args.learningrate}])
         else:
             optimizer = optim.Adam([{'params':sourcetrain_param, 'lr':args.learningrate, 'weight_decay':0.01}, {'params':encoder_param, 'lr':1e-6}, {'params':encoder_st_param, 'lr':args.learningrate, 'weight_decay':0.01}])
         if args.sched == 'cosine':
