@@ -17,7 +17,7 @@
 
 ### train
 ```bash
-python main.py -m 'bntuning' -tr -tc 'fewshot' -d 'miniimagenet' -e 100 -lr 0.01 -elr 1e-4 -bs 256 -opt 'adamW' -log '_name_' -img_size 224 -patch_size 16 -sched 'cosine'
+python main.py -m 'bntuning' -tr -tc 'fewshot' -d 'miniimagenet' -e 100 -lr 0.01 -elr 1e-6 -opt 'adamW' -log '_name_' -img_size 224 -patch_size 16 -sched 'cosine'
 ```
 
 ### Test 
