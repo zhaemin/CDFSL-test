@@ -58,28 +58,33 @@ def parsing_argument():
     parser.add_argument('-only_lastnorm', '--only_lastnorm', action='store_true')
     
     parser.add_argument('-nqt', '--num_query_tokens', metavar='int', type=int, default=1)
+    parser.add_argument('-baseclsload', '--baseclsload', action='store_true')
     
     return parser.parse_args()
 
 def set_parameters(args, net, len_trainloader):
     if args.optimizer == 'adamW' or args.optimizer=='adam':
         sourcetrain_param = []
+        prompt_param = []
         encoder_param = []
         encoder_st_param = []
         cls_param = []
         
         for name, param in net.named_parameters():
             if 'encoder' not in name or 'st_' in name:
+                if 'prompt' in name:
+                    prompt_param.append(param)
+                    continue
                 if 'st_' in name:
                     print(name)
                     encoder_st_param.append(param)
-                else:
-                    sourcetrain_param.append(param)
+                    continue
+                sourcetrain_param.append(param)
             else:
                 encoder_param.append(param)
 
         if args.optimizer == 'adamW':
-            optimizer = optim.AdamW([{'params':sourcetrain_param, 'lr':args.learningrate}, {'params':encoder_param, 'lr':args.encoderlearningrate}, {'params':encoder_st_param, 'lr':args.learningrate}])
+            optimizer = optim.AdamW([{'params':sourcetrain_param, 'lr':args.learningrate}, {'params':prompt_param, 'lr':1e-4},{'params':encoder_param, 'lr':args.encoderlearningrate}, {'params':encoder_st_param, 'lr':args.learningrate}])
         else:
             optimizer = optim.Adam([{'params':sourcetrain_param, 'lr':args.learningrate, 'weight_decay':0.01}, {'params':encoder_param, 'lr':1e-6}, {'params':encoder_st_param, 'lr':args.learningrate, 'weight_decay':0.01}])
         if args.sched == 'cosine':
@@ -130,6 +135,9 @@ def load_model(args):
     if args.model == 'baseline':
         import test_models.baseline as baseline
         net = baseline.Baseline(args.img_size, args.patch_size)
+    elif args.model == 'tttssl':
+        import test_models.ttt as ttt
+        net = ttt.TTTSSL(args.img_size, args.patch_size)
     elif args.model == 'prompt':
         import test_models.prompt as prompt
         net = prompt.Prompt(args.img_size, args.patch_size)
@@ -142,6 +150,9 @@ def load_model(args):
     elif args.model == 'vqt':
         import test_models.visualquerytuning as vqt
         net = vqt.VQTuning(args.img_size, args.patch_size, args.num_query_tokens)
+    elif args.model == 'moe':
+        import test_models.moe as moe
+        net = moe.MoEFSL(args.img_size, args.patch_size)
     elif args.model == 'prefixtuning':
         import test_models.prefixtuning as prefixtuning
         net = prefixtuning.PrefixTuning(args.img_size, args.patch_size)
@@ -150,6 +161,9 @@ def load_model(args):
         net = affinetuning.AffineTuning(args.img_size, args.patch_size, args.only_lastnorm)
     elif args.model == 'bntuning':
         import test_models.batchnorm_tuning as bntuning
+        net = bntuning.BNTuning(args.img_size, args.patch_size)
+    elif args.model == 'bntuning2':
+        import test_models.batchnorm_tuning2 as bntuning
         net = bntuning.BNTuning(args.img_size, args.patch_size)
     elif args.model == 'ft_contextualization':
         import test_models.ft_contextualization as ft_context

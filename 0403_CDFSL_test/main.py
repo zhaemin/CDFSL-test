@@ -18,8 +18,9 @@ from torch.utils.tensorboard import SummaryWriter
 
 
 def train_per_epoch(args, dataloader, net, optimizer, scheduler, device):
-    args.is_new_epoch = True
+    is_new_epoch = True
     running_loss = 0.0
+    print(net.checkencentrop)
     net.train()
     
     representations = None
@@ -42,24 +43,32 @@ def train_per_epoch(args, dataloader, net, optimizer, scheduler, device):
     
     return running_loss/len(dataloader), representations, label_list
 
+def finetuning(testloader, net, args, device):
+    acc = net.finetuning(testloader, device, 50, args)
+    return acc
 
 def fewshot_test(testloader, net, args, device):
     total_acc = 0
+    acc_lst = []
     
     if args.adaptation:
         accuracy = net.ft_fewshot_acc(testloader, device, n_iters=100, args=args)
     else:
         for data in testloader:
-            inputs, labels = data
+            inputs, labels = data # inputs 100 3(aug) 3(channels) 224 224
             inputs, labels = inputs.to(device), labels.to(device)
             
             net.eval()
             acc = net.fewshot_acc(args, inputs, labels, device)
-            total_acc += acc
-            
-        accuracy = total_acc/len(testloader)
-    
-    return accuracy
+            #total_acc += acc
+            acc_lst.append(acc)
+        
+        acc_all = np.asarray([a.cpu().item() if torch.is_tensor(a) else a for a in acc_lst])
+        acc_mean = np.mean(acc_all)
+        acc_std = np.std(acc_all)
+        
+    #'Acc = %4.2f%% +- %4.2f%%'%(acc_mean, 1.96* acc_std/np.sqrt(iter_num))
+    return acc_mean
 
 def crossdomain_test(args, net, device, outputs_log):
     print('--- crossdomain test ---')
@@ -78,6 +87,8 @@ def crossdomain_test(args, net, device, outputs_log):
         trainloader, testloader, valloader, num_classes = dataloader.load_dataset(args, dataset)
         print(f'--- {dataset} test ---')
         acc = fewshot_test(testloader, net, args, device=device)
+        #acc = finetuning(testloader, net, args, device=device)
+        
         total += acc
         print(f'{dataset} fewshot_acc : %.3f'%(acc))
         print(f'{dataset} fewshot_acc : %.3f'%(acc), file=outputs_log)
@@ -90,7 +101,6 @@ def train(args, trainloader, testloader, valloader, net, optimizer, scheduler, d
     max_acc = 0
     for epoch in range(args.epochs):
         running_loss, representations, label_list = train_per_epoch(args, trainloader, net, optimizer, scheduler, device)
-        
         acc = 0
         if args.test == 'fewshot' and (epoch+1) % 5 == 0 or epoch == 0:
             acc = fewshot_test(valloader, net, args, device=device)
@@ -108,10 +118,9 @@ def train(args, trainloader, testloader, valloader, net, optimizer, scheduler, d
         
         torch.save(net.state_dict(), f'./{args.model}_{args.epochs}ep_{args.learningrate}lr_{args.log}.pt')
 
-        '''
         if acc > max_acc:
+            max_acc = acc
             torch.save(net.state_dict(), f'./{args.model}_best_ep_{args.learningrate}lr_{args.log}.pt')
-        '''
             
         running_loss = 0.0
         
@@ -155,6 +164,7 @@ def main():
         train(args, trainloader, testloader, valloader, net, optimizer, scheduler, device, writer, outputs_log)
     
     if args.test == 'fewshot':
+        #net.encoder.load_state_dict(torch.load('dino_deitsmall16_pretrain.pth'), strict=False)
         trainloader, testloader, valloader, num_classes = dataloader.load_dataset(args, args.dataset)
         print(f'--- {args.dataset} test ---')
         acc = fewshot_test(testloader, net, args, device)
@@ -163,7 +173,14 @@ def main():
     
     elif args.test == 'crossdomain':
         #net.encoder.load_state_dict(torch.load('dino_deitsmall16_pretrain.pth'), strict=False)
-        net.load_state_dict(torch.load(args.checkpointdir))
+        net.load_state_dict(torch.load(args.checkpointdir), strict=False)
+        
+        '''
+        for name, param in net.named_parameters():
+            if 'alpha' in name:
+                print(name, torch.sigmoid(param))
+        '''
+                
         print(args.checkpointdir)
         crossdomain_test(args, net, device, outputs_log)
         
