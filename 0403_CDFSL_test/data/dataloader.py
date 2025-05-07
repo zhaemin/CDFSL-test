@@ -32,8 +32,9 @@ class SSLTransform(torch.nn.Module):
             transforms.ToTensor(),
             transforms.Normalize((0.485, 0.456, 0.406),(0.229, 0.224, 0.225))])
         
-        self.transform_test = transforms.Compose([ 
-            transforms.Resize((img_size, img_size), antialias=True),
+        self.transform_test = transforms.Compose([
+            transforms.Resize([int(img_size*1.15), int(img_size*1.15)]),
+            transforms.CenterCrop(img_size),
             transforms.ToTensor(),
             transforms.Normalize((0.485, 0.456, 0.406),(0.229, 0.224, 0.225))])
         
@@ -42,7 +43,10 @@ class SSLTransform(torch.nn.Module):
         x2 = self.transform_weak(x)
         x = self.transform_test(x)
         
-        return [x1, x2, x]
+        x_lst = [x1, x2, x]
+        x_lst = torch.stack(x_lst)
+        
+        return x_lst
 
 class FewShotSampler(Sampler):
     def __init__(self, labels, num_ways, num_shots, num_queries, episodes, num_tasks, data_source=None):
@@ -97,6 +101,7 @@ class FewShotSampler(Sampler):
 
 
 def load_dataset(args, dataset):
+    ssltransform = SSLTransform(args.img_size, args.model)
     
     transform_test = transforms.Compose([ 
         transforms.ToTensor(),
@@ -109,11 +114,14 @@ def load_dataset(args, dataset):
         valloader = None
         num_classes = None
         
-        transform_test = transforms.Compose([
-            transforms.Resize([int(args.img_size*1.15), int(args.img_size*1.15)]),
-            transforms.CenterCrop(args.img_size),
-            transforms.ToTensor(),
-            transforms.Normalize((0.485, 0.456, 0.406),(0.229, 0.224, 0.225))])
+        if 'ssl' in args.model:
+            transform_test = ssltransform
+        else:
+            transform_test = transforms.Compose([
+                transforms.Resize([int(args.img_size*1.15), int(args.img_size*1.15)]),
+                transforms.CenterCrop(args.img_size),
+                transforms.ToTensor(),
+                transforms.Normalize((0.485, 0.456, 0.406),(0.229, 0.224, 0.225))])
         
         testset = cd_dataset.load_crossdomain_dataset(dataset, transform_test)
             
@@ -141,9 +149,11 @@ def load_source_data(args):
         transforms.Normalize((0.485, 0.456, 0.406),(0.229, 0.224, 0.225))])
     
     if 'ssl' in args.model:
-        trainset = torchvision.datasets.ImageFolder(root='../data/fewshotdata/miniimagenet/data/train', transform=ssltransform)
-    else:
-        trainset = torchvision.datasets.ImageFolder(root='../data/fewshotdata/miniimagenet/data/train', transform=transform_train)
+        transform_train = ssltransform
+        transform_test = ssltransform
+        print('ssltransform')
+
+    trainset = torchvision.datasets.ImageFolder(root='../data/fewshotdata/miniimagenet/data/train', transform=transform_train)
     testset = torchvision.datasets.ImageFolder(root='../data/fewshotdata/miniimagenet/data/test', transform=transform_test)
     #valset = torchvision.datasets.ImageFolder(root='../data/fewshotdata/miniimagenet/data/val', transform=transform_test)
     num_classes = 64
@@ -155,13 +165,11 @@ def load_source_data(args):
     valset_labels = torch.LongTensor(valset.targets)
     
     train_sampler = FewShotSampler(trainset_labels, args.train_num_ways, args.num_shots, args.num_queries, args.episodes, args.num_tasks)
-    test_sampler = FewShotSampler(testset_labels, args.test_num_ways, args.num_shots, args.num_queries, 1000, num_tasks=1)
+    test_sampler = FewShotSampler(testset_labels, args.test_num_ways, args.num_shots, args.num_queries, 600, num_tasks=1)
     val_sampler = FewShotSampler(valset_labels, args.test_num_ways, args.num_shots, args.num_queries, 100, num_tasks=1)
     
-    if 'ssl' in args.model:
-        trainloader = DataLoader(trainset, batch_size=args.batch_size, shuffle=True, drop_last=True, num_workers=8, pin_memory=True)
-    else:
-        trainloader = DataLoader(trainset, batch_sampler=train_sampler, num_workers=8, pin_memory=True, worker_init_fn=worker_init_fn)
+
+    trainloader = DataLoader(trainset, batch_sampler=train_sampler, num_workers=8, pin_memory=True, worker_init_fn=worker_init_fn)
     valloader = DataLoader(valset, batch_sampler=val_sampler, num_workers=8, pin_memory=True, worker_init_fn=worker_init_fn)
 
     if args.test == 'fewshot' or args.test == 'crossdomain':
@@ -169,5 +177,7 @@ def load_source_data(args):
     else:
         testloader = DataLoader(testset, batch_size=args.batch_size, shuffle=False, drop_last=True, num_workers=8, worker_init_fn=worker_init_fn)
 
-    
+    if args.baseclsload:
+        trainloader = DataLoader(trainset, batch_size=args.batch_size, shuffle=True, drop_last=True, num_workers=8, pin_memory=True)
+        
     return trainloader, testloader, valloader, num_classes
