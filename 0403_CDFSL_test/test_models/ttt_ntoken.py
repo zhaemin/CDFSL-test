@@ -20,15 +20,10 @@ class VisionTransformer(vit.VisionTransformer):
     def prepare_tokens(self, x, ntoken=None):
         B, nc, w, h = x.shape
         x = self.patch_embed(x)  # patch linear embedding
-            
+        
+        cls_tokens = self.cls_token + ntoken
         # add the [CLS] token to the embed patch tokens
-        cls_tokens = self.cls_token.expand(B, -1, -1)
-
-        # for queries
-        if ntoken != None:
-            cls_tokens = cls_tokens + ntoken
-        else:
-            cls_tokens = cls_tokens
+        cls_tokens = cls_tokens.expand(B, -1, -1)
         
         x = torch.cat((cls_tokens, x), dim=1)
 
@@ -51,6 +46,8 @@ class TTTSSL(nn.Module):
         self.img_size = img_size
         self.patch_size = patch_size
         self.encoder = self.load_backbone()
+        self.ntoken = nn.Parameter(torch.zeros(1, 1, self.encoder.num_features))
+        self.fix_encoder()
         
     def load_backbone(self, patch_size=16, **kwargs):
         encoder =  VisionTransformer(
@@ -59,8 +56,15 @@ class TTTSSL(nn.Module):
         
         return encoder
 
+    def fix_encoder(self):
+        for name, param in self.encoder.named_parameters():
+            if 'norm' in name or 'st_' in name:
+                param.requires_grad = True
+            else:
+                param.requires_grad = False
+
     def calculate_logits(self, args, x_support, x_query, ntoken):
-        x_support = self.encoder(x_support)
+        x_support = self.encoder(x_support, ntoken)
         prototypes = torch.mean(x_support.view(args.train_num_ways, args.num_shots, -1), dim=1)
         prototypes = F.normalize(prototypes, dim=-1)
         
@@ -70,6 +74,20 @@ class TTTSSL(nn.Module):
         logits = torch.einsum('qd, wd -> qw', x_query, prototypes) # 75 5
         
         return logits
+    
+    def forward(self, inputs, labels, args, device):
+        tasks = split_support_query_set(inputs, labels, device, num_tasks=1, num_class=args.train_num_ways, num_shots=args.num_shots)
+        
+        total_loss = 0
+        for x_support, x_query, y_support, y_query in tasks:
+            logits1 = self.calculate_logits(args, x_support[:, 0], x_query[:, 0], self.ntoken)
+            logits2 = self.calculate_logits(args, x_support[:, 1], x_query[:, 1], self.ntoken)
+            
+            loss = (self.cross_entropyloss(logits1, logits2) + self.cross_entropyloss(logits2, logits1)) / 2
+            loss += (F.cross_entropy(logits1, y_query) + F.cross_entropy(logits2, y_query)) / 2
+            total_loss += loss
+        
+        return total_loss
     
     def cross_entropyloss(self, logits1, logits2):
         logits2 = logits2.detach()
@@ -83,10 +101,12 @@ class TTTSSL(nn.Module):
         tasks = split_support_query_set(inputs, labels, device, num_tasks=1, num_class=args.train_num_ways, num_shots=args.num_shots)
         
         query_size = args.num_shots * args.num_queries
-        ntoken = nn.Parameter(torch.zeros(query_size, 1, self.encoder.num_features, device=device))
-        
+        n_prompt = 1
+        #ntoken = nn.Parameter(torch.zeros(1, n_prompt, self.encoder.num_features, device=device))
+        ntoken = copy.deepcopy(self.ntoken)
+                
         optimizer = optim.AdamW([
-            {'params': [ntoken], 'lr': 1e-4},
+            {'params': [ntoken], 'lr': 0.01},
         ])
         
         correct = 0
@@ -98,15 +118,15 @@ class TTTSSL(nn.Module):
             self.train()
             
             for _ in range(n_iters):
-                logits1 = self.calculate_logits(args, x_support[:, 0], x_query[:, 0], ntoken)
-                logits2 = self.calculate_logits(args, x_support[:, 1], x_query[:, 1], ntoken)
+                logits1 = self.calculate_logits(args, x_support[:, 0], x_query[:, 0], ntoken) / 0.1
+                logits2 = self.calculate_logits(args, x_support[:, 1], x_query[:, 1], ntoken) / 0.04
                 
                 loss = (self.cross_entropyloss(logits1, logits2) + self.cross_entropyloss(logits2, logits1)) / 2
                 
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-                
+            
             self.eval()
             
             
