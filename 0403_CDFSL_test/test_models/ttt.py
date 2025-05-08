@@ -118,8 +118,8 @@ class TTTSSL(nn.Module):
             self.train()
             
             for _ in range(n_iters):
-                logits1 = self.calculate_logits(args, x_support[:, 0], x_query[:, 0], ntoken) / 0.1
-                logits2 = self.calculate_logits(args, x_support[:, 1], x_query[:, 1], ntoken) / 0.04
+                logits1 = self.calculate_logits(args, x_support[:, 0], x_query[:, 0], ntoken)
+                logits2 = self.calculate_logits(args, x_support[:, 1], x_query[:, 1], ntoken)
                 
                 loss = (self.cross_entropyloss(logits1, logits2) + self.cross_entropyloss(logits2, logits1)) / 2
                 
