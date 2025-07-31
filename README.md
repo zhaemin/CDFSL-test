@@ -48,9 +48,3 @@ Modify the following argument:
   Set `DISTILL_LOSS` to control which distillation loss is applied.  
 
 ---
-
-
-## 📌 Citation
-
-If you use this codebase for research or publication, please consider citing our work.  
-(Add your citation here.)
