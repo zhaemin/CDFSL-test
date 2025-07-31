@@ -17,7 +17,7 @@ bash scripts/sup_only.sh
 Supervised training enhanced with memory replay (buffer).
 
 ```bash
-bash scripts/sup_only.sh
+bash scripts/buffer.sh
 ```
 
 Modify the following arguments in the script/config:
